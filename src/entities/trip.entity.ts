@@ -78,6 +78,14 @@ export class Trip {
   @Column({ name: 'contact_employee_id', nullable: true })
   contactEmployeeId: string;
 
+  /** Nhân viên quản lý / phụ trách chuyến (chọn từ danh mục NV) */
+  @ManyToOne(() => Employee, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'manager_id' })
+  manager: Employee;
+
+  @Column({ name: 'manager_id', nullable: true })
+  managerId: string;
+
   /** Trip-level commission % (overrides customer.commissionRate when set) */
   @Column({
     type: 'decimal',
@@ -122,12 +130,46 @@ export class Trip {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'toll_cost' })
   tollCost: number;
 
+  /** Vé vào cổng / gửi xe */
+  @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'ticket_cost' })
+  ticketCost: number;
+
+  /** Luật / phạt */
+  @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'fine_cost' })
+  fineCost: number;
+
   /** Snapshot lương trừ chuyến — server gán từ `Employee.baseSalary` khi gán tài xế (không nhận từ FE) */
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'driver_salary' })
   driverSalary: number;
 
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'other_costs' })
   otherCosts: number;
+
+  /** Ghi chú kèm chi phí phát sinh */
+  @Column({ type: 'text', nullable: true, name: 'other_costs_note' })
+  otherCostsNote: string;
+
+  /** Ca ngày/đêm — ảnh hưởng % tài xế trên net (day 10%, night 15%) */
+  @Column({ type: 'varchar', length: 10, default: 'day', name: 'driver_shift' })
+  driverShift: string;
+
+  @Column({
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    name: 'assistant_allowance',
+  })
+  assistantAllowance: number;
+
+  @Column({
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    name: 'assistant_salary',
+  })
+  assistantSalary: number;
 
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   profit: number; // Calculated: revenue - (fuel + toll + salary + other)
@@ -166,7 +208,12 @@ export class Trip {
   calculateProfit(): number {
     return (
       this.revenue -
-      (this.fuelCost + this.tollCost + this.driverSalary + this.otherCosts)
+      (Number(this.fuelCost ?? 0) +
+        Number(this.tollCost ?? 0) +
+        Number(this.ticketCost ?? 0) +
+        Number(this.fineCost ?? 0) +
+        Number(this.driverSalary ?? 0) +
+        Number(this.otherCosts ?? 0))
     );
   }
 }

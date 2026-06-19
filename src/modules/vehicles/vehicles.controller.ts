@@ -15,6 +15,11 @@ import { UpdateVehicleDto } from './dto/update-vehicle.dto';
 import { QueryVehicleDto } from './dto/query-vehicle.dto';
 import { QueryVehicleTripsDto } from './dto/query-vehicle-trips.dto';
 import { QueryVehicleRepairsDto } from './dto/query-vehicle-repairs.dto';
+import { VehicleDetailQueryDto } from './dto/vehicle-detail-query.dto';
+import {
+  CreateVehicleExpenseDto,
+  UpdateVehicleExpenseDto,
+} from './dto/vehicle-expense-transaction.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CompanyId } from '../../common/decorators/company-id.decorator';
 
@@ -44,6 +49,21 @@ export class VehiclesController {
     return { success: true, data };
   }
 
+  @Get(':id/detail')
+  async getDetail(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+    @Query() query: VehicleDetailQueryDto,
+  ) {
+    const data = await this.vehiclesService.getVehicleDetail(
+      companyId,
+      id,
+      query.fromDate,
+      query.toDate,
+    );
+    return { success: true, data };
+  }
+
   @Get(':id/trips')
   async getTrips(
     @CompanyId() companyId: string,
@@ -68,6 +88,86 @@ export class VehiclesController {
       companyId,
       id,
       query,
+    );
+    return { success: true, data };
+  }
+
+  @Post(':id/fuels')
+  async createFuel(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateVehicleExpenseDto,
+  ) {
+    const data = await this.vehiclesService.createVehicleFuel(companyId, id, dto);
+    return { success: true, data };
+  }
+
+  @Patch(':id/fuels/:fuelId')
+  async updateFuel(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+    @Param('fuelId') fuelId: string,
+    @Body() dto: UpdateVehicleExpenseDto,
+  ) {
+    const data = await this.vehiclesService.updateVehicleFuel(
+      companyId,
+      id,
+      fuelId,
+      dto,
+    );
+    return { success: true, data };
+  }
+
+  @Delete(':id/fuels/:fuelId')
+  async deleteFuel(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+    @Param('fuelId') fuelId: string,
+  ) {
+    const data = await this.vehiclesService.deleteVehicleFuel(
+      companyId,
+      id,
+      fuelId,
+    );
+    return { success: true, data };
+  }
+
+  @Post(':id/repairs')
+  async createRepairTx(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateVehicleExpenseDto,
+  ) {
+    const data = await this.vehiclesService.createVehicleRepair(companyId, id, dto);
+    return { success: true, data };
+  }
+
+  @Patch(':id/repairs/:repairId')
+  async updateRepairTx(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+    @Param('repairId') repairId: string,
+    @Body() dto: UpdateVehicleExpenseDto,
+  ) {
+    const data = await this.vehiclesService.updateVehicleRepair(
+      companyId,
+      id,
+      repairId,
+      dto,
+    );
+    return { success: true, data };
+  }
+
+  @Delete(':id/repairs/:repairId')
+  async deleteRepairTx(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+    @Param('repairId') repairId: string,
+  ) {
+    const data = await this.vehiclesService.deleteVehicleRepair(
+      companyId,
+      id,
+      repairId,
     );
     return { success: true, data };
   }

@@ -209,10 +209,12 @@ export class ExcelService {
     return results;
   }
 
-  async exportToExcel(companyId: string, trips: Trip[]) {
+  /** Nhận `Trip` hoặc bản đã enrich từ `findAll` (có thêm price, debtRemaining, …) */
+  async exportToExcel(companyId: string, trips: any[]) {
     const workbook = XLSX.utils.book_new();
 
     // Header row
+    /** Khớp thứ tự `parseRow` (import) — cột A–P; lương lái lấy từ NV khi import, không nhập từ Excel */
     const headers = [
       'Ngày chuyến',
       'Mã chuyến',
@@ -227,7 +229,6 @@ export class ExcelService {
       'Doanh thu',
       'Chi phí xăng',
       'Chi phí cầu đường',
-      'Lương lái xe',
       'Chi phí khác',
       'Lợi nhuận',
       'Ghi chú',
@@ -248,7 +249,6 @@ export class ExcelService {
       trip.revenue || 0,
       trip.fuelCost || 0,
       trip.tollCost || 0,
-      trip.driverSalary || 0,
       trip.otherCosts || 0,
       trip.profit || 0,
       trip.notes || '',

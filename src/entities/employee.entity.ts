@@ -12,6 +12,8 @@ import {
 import { Company } from './company.entity';
 import { Trip } from './trip.entity';
 import { Transaction } from './transaction.entity';
+import { EmployeeSalaryAdvance } from './employee-salary-advance.entity';
+import { EmployeeAbsence } from './employee-absence.entity';
 
 @Entity('employees')
 export class Employee {
@@ -77,6 +79,15 @@ export class Employee {
   @OneToMany(() => Trip, (trip) => trip.coDriver)
   tripsAsCoDriver: Trip[];
 
+  @OneToMany(() => Trip, (trip) => trip.manager)
+  tripsAsManager: Trip[];
+
   @OneToMany(() => Transaction, (transaction) => transaction.employee)
   transactions: Transaction[];
+
+  @OneToMany(() => EmployeeSalaryAdvance, (r) => r.employee)
+  salaryAdvances: EmployeeSalaryAdvance[];
+
+  @OneToMany(() => EmployeeAbsence, (r) => r.employee)
+  absenceRecords: EmployeeAbsence[];
 }

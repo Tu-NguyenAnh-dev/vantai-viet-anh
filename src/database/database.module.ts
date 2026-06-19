@@ -18,6 +18,8 @@ import { Commission } from '../entities/commission.entity';
 import { Supplier } from '../entities/supplier.entity';
 import { Debt } from '../entities/debt.entity';
 import { SalaryConfig } from '../entities/salary-config.entity';
+import { EmployeeSalaryAdvance } from '../entities/employee-salary-advance.entity';
+import { EmployeeAbsence } from '../entities/employee-absence.entity';
 
 @Module({
   imports: [
@@ -48,6 +50,8 @@ import { SalaryConfig } from '../entities/salary-config.entity';
           Supplier,
           Debt,
           SalaryConfig,
+          EmployeeSalaryAdvance,
+          EmployeeAbsence,
         ],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',

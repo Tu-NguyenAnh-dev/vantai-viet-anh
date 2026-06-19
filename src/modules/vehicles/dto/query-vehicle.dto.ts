@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsInt, Min } from 'class-validator';
+import { IsOptional, IsString, IsInt, Min, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class QueryVehicleDto {
@@ -32,4 +32,21 @@ export class QueryVehicleDto {
   @IsOptional()
   @IsString()
   vehicleType?: string;
+
+  /** Sắp xếp theo cột (hiện hỗ trợ: status) */
+  @IsOptional()
+  @IsString()
+  @IsIn(['status'])
+  sort?: string;
+
+  /** ASC | DESC */
+  @IsOptional()
+  @IsString()
+  @IsIn(['ASC', 'DESC', 'asc', 'desc'])
+  sortOrder?: string;
+
+  /** YYYY-MM — gắn monthlyRevenue / monthlyExpense / profit (theo getVehicleDetail) */
+  @IsOptional()
+  @IsString()
+  metricsMonth?: string;
 }

@@ -4,11 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Employee } from '../../entities/employee.entity';
 import { Commission } from '../../entities/commission.entity';
 import { Trip } from '../../entities/trip.entity';
 import { Transaction } from '../../entities/transaction.entity';
+import { EmployeeSalaryAdvance } from '../../entities/employee-salary-advance.entity';
+import { EmployeeAbsence } from '../../entities/employee-absence.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { QueryEmployeeDto } from './dto/query-employee.dto';
@@ -18,6 +20,16 @@ import {
   QueryEmployeeIncomeDto,
 } from './dto/query-employee-history.dto';
 import { SalariesService } from '../salaries/salaries.service';
+import {
+  CreateSalaryAdvanceDto,
+  UpdateSalaryAdvanceDto,
+} from './dto/salary-advance.dto';
+import { CreateAbsenceDto } from './dto/create-absence.dto';
+
+/** Số ngày nghỉ không trừ lương trong tháng */
+const ALLOWED_REST_DAYS_PER_MONTH = 2;
+/** Mẫu số chia lương ngày (quy ước: lương cơ bản / 26) */
+const WORK_DAYS_FOR_SALARY_PRORATION = 26;
 
 @Injectable()
 export class EmployeesService {
@@ -30,6 +42,10 @@ export class EmployeesService {
     private tripRepository: Repository<Trip>,
     @InjectRepository(Transaction)
     private transactionRepository: Repository<Transaction>,
+    @InjectRepository(EmployeeSalaryAdvance)
+    private salaryAdvanceRepository: Repository<EmployeeSalaryAdvance>,
+    @InjectRepository(EmployeeAbsence)
+    private absenceRepository: Repository<EmployeeAbsence>,
     private salariesService: SalariesService,
   ) {}
 
@@ -295,5 +311,355 @@ export class EmployeesService {
       totalAmount: parseFloat(r.totalAmount || '0'),
       totalRecords: parseInt(r.totalRecords || '0', 10),
     }));
+  }
+
+  /**
+   * Chi tiết NV: thông tin + lịch sử chuyến (tài xế) gom theo tháng +
+   * bảng lương theo tháng (lương nền + % chuyến − ứng − trừ nghỉ).
+   */
+  async getEmployeeDetail(
+    companyId: string,
+    employeeId: string,
+    fromMonth?: string,
+    toMonth?: string,
+  ) {
+    const employee = await this.findOne(companyId, employeeId);
+    const { from, to } = this.resolveMonthRange(fromMonth, toMonth);
+    if (from > to) {
+      throw new BadRequestException('fromMonth không được sau toMonth');
+    }
+    const months = this.enumerateMonths(from, to);
+    const rangeStart = `${from}-01`;
+    const rangeEnd = this.lastDayOfMonthString(to);
+
+    const trips = await this.tripRepository
+      .createQueryBuilder('trip')
+      .leftJoinAndSelect('trip.vehicle', 'vehicle')
+      .leftJoinAndSelect('trip.customer', 'customer')
+      .where('trip.companyId = :companyId', { companyId })
+      .andWhere('trip.driverId = :employeeId', { employeeId })
+      .andWhere('trip.status != :cancelled', { cancelled: 'cancelled' })
+      .andWhere('trip.tripDate >= :rs', { rs: rangeStart })
+      .andWhere('trip.tripDate <= :re', { re: rangeEnd })
+      .orderBy('trip.tripDate', 'DESC')
+      .getMany();
+
+    const tripIds = trips.map((t) => t.id);
+    const commissionByTrip = new Map<string, number>();
+    if (tripIds.length) {
+      const comms = await this.commissionRepository.find({
+        where: { tripId: In(tripIds) },
+        select: ['tripId', 'amount'],
+      });
+      for (const c of comms) {
+        commissionByTrip.set(c.tripId, Number(c.amount ?? 0));
+      }
+    }
+
+    const tripsByMonth = new Map<string, Trip[]>();
+    for (const ym of months) tripsByMonth.set(ym, []);
+    for (const t of trips) {
+      const ym = this.tripDateToYearMonth(t.tripDate);
+      if (!tripsByMonth.has(ym)) tripsByMonth.set(ym, []);
+      tripsByMonth.get(ym)!.push(t);
+    }
+
+    const tripHistoryByMonth = months.map((ym) => ({
+      yearMonth: ym,
+      trips: (tripsByMonth.get(ym) ?? []).map((t) =>
+        this.mapDriverTripDetail(t, commissionByTrip.get(t.id) ?? 0),
+      ),
+    }));
+
+    const baseSalary = Number(employee.baseSalary ?? 0);
+    const dailyRate =
+      WORK_DAYS_FOR_SALARY_PRORATION > 0
+        ? baseSalary / WORK_DAYS_FOR_SALARY_PRORATION
+        : 0;
+
+    const payrollByMonth = await Promise.all(
+      months.map(async (ym) => {
+        const monthTrips = tripsByMonth.get(ym) ?? [];
+        let driverPercentTotal = 0;
+        for (const t of monthTrips) {
+          driverPercentTotal += this.computeDriverIncentiveForTrip(
+            t,
+            commissionByTrip.get(t.id) ?? 0,
+          );
+        }
+
+        const monthStart = `${ym}-01`;
+        const monthEnd = this.lastDayOfMonthString(ym);
+
+        const advances = await this.salaryAdvanceRepository
+          .createQueryBuilder('a')
+          .where('a.companyId = :companyId', { companyId })
+          .andWhere('a.employeeId = :employeeId', { employeeId })
+          .andWhere('a.advanceDate BETWEEN :ms AND :me', {
+            ms: monthStart,
+            me: monthEnd,
+          })
+          .orderBy('a.advanceDate', 'DESC')
+          .getMany();
+
+        const advanceTotal = advances.reduce(
+          (s, a) => s + Number(a.amount ?? 0),
+          0,
+        );
+
+        const absenceRows = await this.absenceRepository
+          .createQueryBuilder('ab')
+          .where('ab.companyId = :companyId', { companyId })
+          .andWhere('ab.employeeId = :employeeId', { employeeId })
+          .andWhere('ab.absenceDate BETWEEN :ms AND :me', {
+            ms: monthStart,
+            me: monthEnd,
+          })
+          .orderBy('ab.absenceDate', 'ASC')
+          .getMany();
+
+        const absentCount = absenceRows.length;
+        const absenceDates = absenceRows.map((r) => ({
+          id: r.id,
+          absenceDate: r.absenceDate,
+          note: r.note ?? null,
+        }));
+
+        const extraAbsentDays = Math.max(
+          0,
+          absentCount - ALLOWED_REST_DAYS_PER_MONTH,
+        );
+        const absenceDeduction = extraAbsentDays * dailyRate;
+
+        const totalSalary =
+          baseSalary +
+          driverPercentTotal -
+          advanceTotal -
+          absenceDeduction;
+
+        return {
+          yearMonth: ym,
+          baseSalary,
+          driverPercentTotal,
+          advances: advances.map((a) => ({
+            id: a.id,
+            advanceDate: a.advanceDate,
+            amount: Number(a.amount),
+            note: a.note ?? null,
+          })),
+          advanceTotal,
+          attendance: {
+            allowedRestDays: ALLOWED_REST_DAYS_PER_MONTH,
+            absentDays: absentCount,
+            absenceDates,
+            extraAbsentDays,
+            workDaysDenominator: WORK_DAYS_FOR_SALARY_PRORATION,
+            dailyRateFromBase: dailyRate,
+            absenceDeduction,
+          },
+          totalSalary,
+        };
+      }),
+    );
+
+    return {
+      employee,
+      tripHistoryByMonth,
+      payrollByMonth,
+      rules: {
+        driverPercent:
+          'Ca ngày 10% / ca đêm 15% trên lợi nhuận gộp chuyến (doanh thu − xăng trên chuyến − cầu đường − chi phí khác − hoa hồng contact − phụ cấp phụ xe), giống dashboard xe.',
+        absence:
+          `${ALLOWED_REST_DAYS_PER_MONTH} ngày nghỉ không trừ; ngày vượt × (lương cơ bản / ${WORK_DAYS_FOR_SALARY_PRORATION}).`,
+      },
+    };
+  }
+
+  async createSalaryAdvance(
+    companyId: string,
+    employeeId: string,
+    dto: CreateSalaryAdvanceDto,
+  ) {
+    await this.findOne(companyId, employeeId);
+    const row = this.salaryAdvanceRepository.create({
+      companyId,
+      employeeId,
+      advanceDate: dto.advanceDate.split('T')[0],
+      amount: dto.amount,
+      note: dto.note ?? null,
+    });
+    return this.salaryAdvanceRepository.save(row);
+  }
+
+  async updateSalaryAdvance(
+    companyId: string,
+    employeeId: string,
+    advanceId: string,
+    dto: UpdateSalaryAdvanceDto,
+  ) {
+    await this.findOne(companyId, employeeId);
+    const row = await this.salaryAdvanceRepository.findOne({
+      where: { id: advanceId, companyId, employeeId },
+    });
+    if (!row) throw new NotFoundException('Không tìm thấy khoản ứng lương');
+    if (dto.advanceDate !== undefined) {
+      row.advanceDate = dto.advanceDate.split('T')[0];
+    }
+    if (dto.amount !== undefined) row.amount = dto.amount;
+    if (dto.note !== undefined) row.note = dto.note;
+    return this.salaryAdvanceRepository.save(row);
+  }
+
+  async removeSalaryAdvance(
+    companyId: string,
+    employeeId: string,
+    advanceId: string,
+  ) {
+    const row = await this.salaryAdvanceRepository.findOne({
+      where: { id: advanceId, companyId, employeeId },
+    });
+    if (!row) throw new NotFoundException('Không tìm thấy khoản ứng lương');
+    await this.salaryAdvanceRepository.remove(row);
+    return { success: true };
+  }
+
+  async createAbsence(
+    companyId: string,
+    employeeId: string,
+    dto: CreateAbsenceDto,
+  ) {
+    await this.findOne(companyId, employeeId);
+    const d = dto.absenceDate.split('T')[0];
+    try {
+      const row = this.absenceRepository.create({
+        companyId,
+        employeeId,
+        absenceDate: d,
+        note: dto.note ?? null,
+      });
+      return await this.absenceRepository.save(row);
+    } catch {
+      throw new BadRequestException('Ngày nghỉ đã tồn tại cho nhân viên này');
+    }
+  }
+
+  async removeAbsence(
+    companyId: string,
+    employeeId: string,
+    absenceId: string,
+  ) {
+    const row = await this.absenceRepository.findOne({
+      where: { id: absenceId, companyId, employeeId },
+    });
+    if (!row) throw new NotFoundException('Không tìm thấy ngày nghỉ');
+    await this.absenceRepository.remove(row);
+    return { success: true };
+  }
+
+  private mapDriverTripDetail(t: Trip, commissionAmount: number) {
+    return {
+      id: t.id,
+      tripCode: t.tripCode,
+      tripDate: t.tripDate,
+      address: t.address ?? null,
+      notes: t.notes ?? null,
+      revenue: Number(t.revenue ?? 0),
+      tollCost: Number(t.tollCost ?? 0),
+      ticketCost: Number((t as any).ticketCost ?? 0),
+      fineCost: Number((t as any).fineCost ?? 0),
+      otherCosts: Number(t.otherCosts ?? 0),
+      otherCostsNote: t.otherCostsNote ?? null,
+      assistantAllowance: Number(t.assistantAllowance ?? 0),
+      status: t.status,
+      driverShift: t.driverShift ?? 'day',
+      vehicle: t.vehicle
+        ? { id: t.vehicle.id, licensePlate: t.vehicle.licensePlate }
+        : null,
+      customer: t.customer
+        ? { id: t.customer.id, name: t.customer.name }
+        : null,
+      driverIncentiveThisTrip: this.computeDriverIncentiveForTrip(
+        t,
+        commissionAmount,
+      ),
+    };
+  }
+
+  /**
+   * Lương % tài xế theo chuyến:
+   * netBase = revenue - toll - ticket - fine - otherCosts - assistantAllowance - contactCommission
+   * (fuelCost ghi qua vehicle expense transaction, không trừ tại đây)
+   */
+  private computeDriverIncentiveForTrip(
+    trip: Trip,
+    commissionTrip: number,
+  ): number {
+    const rev = Number(trip.revenue ?? 0);
+    const toll = Number(trip.tollCost ?? 0);
+    const ticket = Number((trip as any).ticketCost ?? 0);
+    const fine = Number((trip as any).fineCost ?? 0);
+    const other = Number(trip.otherCosts ?? 0);
+    const comm = Number(commissionTrip ?? 0);
+    const assistantAllowance = Number(trip.assistantAllowance ?? 0);
+    const shift =
+      String(trip.driverShift || 'day').toLowerCase() === 'night'
+        ? 'night'
+        : 'day';
+    const rate = shift === 'night' ? 0.15 : 0.1;
+    const netBase = rev - toll - ticket - fine - other - comm - assistantAllowance;
+    if (netBase <= 0) return 0;
+    return netBase * rate;
+  }
+
+  private tripDateToYearMonth(tripDate: Date | string): string {
+    if (typeof tripDate === 'string') {
+      return tripDate.split('T')[0].slice(0, 7);
+    }
+    const y = tripDate.getFullYear();
+    const m = String(tripDate.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }
+
+  private resolveMonthRange(
+    fromMonth?: string,
+    toMonth?: string,
+  ): { from: string; to: string } {
+    const now = new Date();
+    const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    /** Không truyền kỳ: mặc định **một tháng hiện tại** (khớp FE chi tiết NV / tránh payload 12 tháng). */
+    if (fromMonth == null && toMonth == null) {
+      return { from: currentYm, to: currentYm };
+    }
+    const toDefault = currentYm;
+    const fd = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    const fromDefault = `${fd.getFullYear()}-${String(fd.getMonth() + 1).padStart(2, '0')}`;
+    return {
+      from: fromMonth ?? fromDefault,
+      to: toMonth ?? toDefault,
+    };
+  }
+
+  private enumerateMonths(fromYm: string, toYm: string): string[] {
+    const out: string[] = [];
+    let y = parseInt(fromYm.slice(0, 4), 10);
+    let m = parseInt(fromYm.slice(5, 7), 10);
+    const endY = parseInt(toYm.slice(0, 4), 10);
+    const endM = parseInt(toYm.slice(5, 7), 10);
+    while (y < endY || (y === endY && m <= endM)) {
+      out.push(`${y}-${String(m).padStart(2, '0')}`);
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+    return out;
+  }
+
+  private lastDayOfMonthString(yearMonth: string): string {
+    const y = parseInt(yearMonth.slice(0, 4), 10);
+    const mo = parseInt(yearMonth.slice(5, 7), 10);
+    const last = new Date(y, mo, 0).getDate();
+    return `${yearMonth}-${String(last).padStart(2, '0')}`;
   }
 }

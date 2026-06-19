@@ -12,6 +12,7 @@ import { DataMapping } from '../../entities/data-mapping.entity';
 import { ImportLog } from '../../entities/import-log.entity';
 import { TripImportProcessor } from './processors/trip-import.processor';
 import { Commission } from '../../entities/commission.entity';
+import { Debt } from '../../entities/debt.entity';
 import { DebtsModule } from '../debts/debts.module';
 import { TransactionsModule } from '../transactions/transactions.module';
 
@@ -25,6 +26,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
       Employee,
       Customer,
       Commission,
+      Debt,
       DataMapping,
       ImportLog,
     ]),

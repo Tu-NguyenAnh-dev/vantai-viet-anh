@@ -12,7 +12,6 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { UsersModule } from './modules/users/users.module';
-import { ImportModule } from './modules/import/import.module';
 import { DatabaseModule } from './database/database.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { DebtsModule } from './modules/debts/debts.module';
@@ -41,7 +40,6 @@ import { SalariesModule } from './modules/salaries/salaries.module';
     TransactionsModule,
     ReportsModule,
     UsersModule,
-    ImportModule,
     SuppliersModule,
     DebtsModule,
     SalariesModule,

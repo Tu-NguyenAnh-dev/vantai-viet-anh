@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, QueryFailedError } from 'typeorm';
+import { Repository, Like, QueryFailedError, In } from 'typeorm';
 import { Trip } from '../../entities/trip.entity';
 import { Vehicle } from '../../entities/vehicle.entity';
 import { Employee } from '../../entities/employee.entity';
 import { Commission } from '../../entities/commission.entity';
+import { Debt } from '../../entities/debt.entity';
 import { CreateTripDto } from './dto/create-trip.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 import { QueryTripDto } from './dto/query-trip.dto';
@@ -22,6 +23,8 @@ export class TripsService {
     private employeeRepository: Repository<Employee>,
     @InjectRepository(Commission)
     private commissionRepository: Repository<Commission>,
+    @InjectRepository(Debt)
+    private debtRepository: Repository<Debt>,
     private debtsService: DebtsService,
     private transactionsService: TransactionsService,
   ) {}
@@ -31,35 +34,63 @@ export class TripsService {
       price,
       route,
       paidAmount,
-      repairCost,
-      fineCost,
       commissionRateApplied,
       revenue,
       otherCosts,
+      otherCostsNote,
       notes,
       contactEmployeeId,
+      managerId,
+      driverShift,
+      assistantAllowance,
+      coDriverId,
       tripCode: explicitTripCode,
       ...rest
     } = createTripDto;
 
+    if (contactEmployeeId) {
+      await this.assertEmployeeInCompany(
+        companyId,
+        contactEmployeeId,
+        'Người liên hệ hoa hồng',
+      );
+    }
+    if (managerId) {
+      await this.assertEmployeeInCompany(companyId, managerId, 'Quản lý');
+    }
+    if (coDriverId) {
+      await this.assertEmployeeInCompany(companyId, coDriverId, 'Phụ xe');
+      if (createTripDto.driverId && coDriverId === createTripDto.driverId) {
+        throw new BadRequestException('Phụ xe không được trùng tài xế');
+      }
+    }
+
     const revenueVal = revenue ?? price ?? 0;
-    const otherCostsVal =
-      Number(otherCosts ?? 0) +
-      Number(repairCost ?? 0) +
-      Number(fineCost ?? 0);
+    const otherCostsVal = Number(otherCosts ?? 0);
     const notesVal = notes ?? route;
 
     const trip = this.tripRepository.create({
       ...rest,
+      coDriverId: coDriverId ?? null,
       revenue: revenueVal,
       otherCosts: otherCostsVal,
+      otherCostsNote: otherCostsNote ?? null,
       notes: notesVal,
       paidAmount: paidAmount ?? 0,
       contactEmployeeId: contactEmployeeId ?? null,
+      managerId: managerId ?? null,
       commissionRateApplied:
         commissionRateApplied != null ? commissionRateApplied : null,
       companyId,
+      driverShift: this.normalizeDriverShift(driverShift),
+      assistantAllowance: coDriverId
+        ? Number(assistantAllowance ?? 0)
+        : 0,
     });
+
+    if (!coDriverId) {
+      trip.assistantSalary = 0;
+    }
 
     // Default status: NEW or ASSIGNED if vehicle + driver provided
     if (trip.vehicleId && trip.driverId) {
@@ -84,6 +115,13 @@ export class TripsService {
 
     if (trip.driverId) {
       await this.applyDriverSalaryFromEmployee(companyId, trip, trip.driverId);
+    }
+    if (trip.coDriverId) {
+      await this.applyAssistantSalaryFromEmployee(
+        companyId,
+        trip,
+        trip.coDriverId,
+      );
     }
 
     // Calculate profit
@@ -205,6 +243,8 @@ export class TripsService {
       .leftJoinAndSelect('trip.driver', 'driver')
       .leftJoinAndSelect('trip.coDriver', 'coDriver')
       .leftJoinAndSelect('trip.customer', 'customer')
+      .leftJoinAndSelect('trip.manager', 'manager')
+      .leftJoinAndSelect('trip.contactEmployee', 'contactEmployee')
       .where('trip.companyId = :companyId', { companyId });
 
     if (startDate && endDate) {
@@ -236,7 +276,7 @@ export class TripsService {
 
     if (search) {
       queryBuilder.andWhere(
-        '(trip.tripCode ILIKE :search OR trip.address ILIKE :search)',
+        '(trip.tripCode ILIKE :search OR trip.address ILIKE :search OR trip.notes ILIKE :search OR customer.name ILIKE :search OR driver.fullName ILIKE :search OR vehicle.licensePlate ILIKE :search)',
         { search: `%${search}%` },
       );
     }
@@ -248,8 +288,21 @@ export class TripsService {
       .take(limit)
       .getManyAndCount();
 
+    const tripIds = data.map((t) => t.id);
+    const debtMap = new Map<string, Debt>();
+    if (tripIds.length) {
+      const debts = await this.debtRepository.find({
+        where: { companyId, tripId: In(tripIds) },
+      });
+      for (const d of debts) {
+        debtMap.set(d.tripId, d);
+      }
+    }
+
+    const rows = data.map((trip) => this.enrichTripListItem(trip, debtMap));
+
     return {
-      data,
+      data: rows,
       pagination: {
         page,
         limit,
@@ -259,21 +312,59 @@ export class TripsService {
     };
   }
 
-  async findOne(companyId: string, id: string) {
+  /** Trường phẳng + alias phục vụ bảng danh sách chuyến (FE) */
+  private enrichTripListItem(trip: Trip, debtMap: Map<string, Debt>) {
+    const debt = debtMap.get(trip.id);
+    const debtRemaining =
+      debt != null
+        ? Number(debt.remaining)
+        : Math.max(
+            0,
+            Number(trip.revenue ?? 0) - Number(trip.paidAmount ?? 0),
+          );
+    return {
+      ...trip,
+      price: Number(trip.revenue ?? 0),
+      debtRemaining,
+      customerName: trip.customer?.name ?? null,
+      managerName: trip.manager?.fullName ?? null,
+      commissionContactName: trip.contactEmployee?.fullName ?? null,
+    };
+  }
+
+  private readonly tripDetailRelations = [
+    'vehicle',
+    'driver',
+    'coDriver',
+    'customer',
+    'manager',
+    'contactEmployee',
+  ] as const;
+
+  /** Entity gốc (dùng nội bộ: save, cập nhật trạng thái) */
+  private async findTripEntity(companyId: string, id: string): Promise<Trip> {
     const trip = await this.tripRepository.findOne({
       where: { id, companyId },
-      relations: ['vehicle', 'driver', 'coDriver', 'customer'],
+      relations: [...this.tripDetailRelations],
     });
-
     if (!trip) {
       throw new NotFoundException('Trip not found');
     }
-
     return trip;
   }
 
+  async findOne(companyId: string, id: string) {
+    const trip = await this.findTripEntity(companyId, id);
+    const debt = await this.debtRepository.findOne({
+      where: { companyId, tripId: trip.id },
+    });
+    const debtMap = new Map<string, Debt>();
+    if (debt) debtMap.set(trip.id, debt);
+    return this.enrichTripListItem(trip, debtMap);
+  }
+
   async update(companyId: string, id: string, updateTripDto: UpdateTripDto) {
-    const trip = await this.findOne(companyId, id);
+    const trip = await this.findTripEntity(companyId, id);
 
     if (trip.status === 'completed') {
       throw new BadRequestException('Completed trip cannot be edited');
@@ -310,16 +401,34 @@ export class TripsService {
       price,
       route,
       paidAmount,
-      repairCost,
-      fineCost,
       commissionRateApplied,
       contactEmployeeId,
+      managerId,
       revenue,
       otherCosts,
+      otherCostsNote,
       notes,
       tripDate: tripDateInput,
+      driverShift,
+      assistantAllowance,
+      coDriverId,
       ...rest
     } = updateTripDto;
+
+    if (contactEmployeeId !== undefined) {
+      if (contactEmployeeId) {
+        await this.assertEmployeeInCompany(
+          companyId,
+          contactEmployeeId,
+          'Người liên hệ hoa hồng',
+        );
+      }
+      trip.contactEmployeeId = contactEmployeeId;
+    }
+
+    if (managerId !== undefined && managerId !== null) {
+      await this.assertEmployeeInCompany(companyId, managerId, 'Quản lý');
+    }
 
     Object.assign(trip, rest);
 
@@ -337,17 +446,12 @@ export class TripsService {
       trip.revenue = price;
     }
 
-    if (
-      otherCosts !== undefined ||
-      repairCost !== undefined ||
-      fineCost !== undefined
-    ) {
-      const base =
-        otherCosts !== undefined
-          ? Number(otherCosts)
-          : Number(trip.otherCosts ?? 0);
-      trip.otherCosts =
-        base + Number(repairCost ?? 0) + Number(fineCost ?? 0);
+    if (otherCosts !== undefined) {
+      trip.otherCosts = Number(otherCosts);
+    }
+
+    if (otherCostsNote !== undefined) {
+      trip.otherCostsNote = otherCostsNote;
     }
 
     if (notes !== undefined) {
@@ -359,15 +463,55 @@ export class TripsService {
     if (paidAmount !== undefined) {
       trip.paidAmount = paidAmount;
     }
-    if (contactEmployeeId !== undefined) {
-      trip.contactEmployeeId = contactEmployeeId;
+    if (managerId !== undefined) {
+      trip.managerId = managerId;
     }
     if (commissionRateApplied !== undefined) {
       trip.commissionRateApplied = commissionRateApplied;
     }
 
-    if (updateTripDto.driverId !== undefined) {
+    if (driverShift !== undefined) {
+      trip.driverShift = this.normalizeDriverShift(driverShift);
+    }
+
+    // Recalculate driverSalary nếu tài xế hoặc bất kỳ field tài chính nào thay đổi
+    const financialFieldsChanged =
+      updateTripDto.driverId !== undefined ||
+      revenue !== undefined ||
+      price !== undefined ||
+      updateTripDto.tollCost !== undefined ||
+      (updateTripDto as any).ticketCost !== undefined ||
+      (updateTripDto as any).fineCost !== undefined ||
+      otherCosts !== undefined ||
+      assistantAllowance !== undefined ||
+      commissionRateApplied !== undefined ||
+      driverShift !== undefined;
+
+    if (financialFieldsChanged && trip.driverId) {
       await this.applyDriverSalaryFromEmployee(companyId, trip, trip.driverId);
+    }
+
+    if (coDriverId !== undefined) {
+      if (coDriverId) {
+        await this.assertEmployeeInCompany(companyId, coDriverId, 'Phụ xe');
+        if (trip.driverId && coDriverId === trip.driverId) {
+          throw new BadRequestException('Phụ xe không được trùng tài xế');
+        }
+        trip.coDriverId = coDriverId;
+        await this.applyAssistantSalaryFromEmployee(companyId, trip, coDriverId);
+      } else {
+        trip.coDriverId = null;
+        trip.assistantSalary = 0;
+        trip.assistantAllowance = 0;
+      }
+    }
+
+    if (assistantAllowance !== undefined) {
+      trip.assistantAllowance = trip.coDriverId ? Number(assistantAllowance) : 0;
+    }
+
+    if (trip.driverId && trip.coDriverId && trip.driverId === trip.coDriverId) {
+      throw new BadRequestException('Tài xế không được trùng phụ xe');
     }
 
     // Recalculate profit
@@ -379,7 +523,30 @@ export class TripsService {
   }
 
   /**
-   * Lương trừ trên chuyến = `baseSalary` của nhân viên (tài xế) tại thời điểm gán.
+   * Tính lương tài xế theo công thức:
+   *   netBase = revenue - tollCost - ticketCost - fineCost - otherCosts
+   *             - assistantAllowance - contactCommission
+   *   driverSalary = netBase × (ca đêm ? 15% : 10%)
+   */
+  private calculateDriverSalary(trip: Trip): number {
+    const rate = trip.driverShift === 'night' ? 0.15 : 0.10;
+    const contactCommission =
+      trip.commissionRateApplied != null
+        ? (Number(trip.revenue) * Number(trip.commissionRateApplied)) / 100
+        : 0;
+    const netBase =
+      Number(trip.revenue ?? 0) -
+      Number(trip.tollCost ?? 0) -
+      Number(trip.ticketCost ?? 0) -
+      Number(trip.fineCost ?? 0) -
+      Number(trip.otherCosts ?? 0) -
+      Number(trip.assistantAllowance ?? 0) -
+      contactCommission;
+    return Math.max(0, netBase) * rate;
+  }
+
+  /**
+   * Lương trừ trên chuyến — tính theo % doanh thu ròng.
    * Không nhận từ FE — chỉ đồng bộ khi có `driverId`.
    */
   private async applyDriverSalaryFromEmployee(
@@ -389,16 +556,41 @@ export class TripsService {
   ): Promise<void> {
     const driver = await this.employeeRepository.findOne({
       where: { id: driverId, companyId },
-      select: ['id', 'baseSalary'],
+      select: ['id'],
     });
     if (!driver) {
       throw new NotFoundException('Driver not found');
     }
-    trip.driverSalary = Number(driver.baseSalary ?? 0);
+    trip.driverSalary = this.calculateDriverSalary(trip);
+  }
+
+  /** Ca ngày / ca đêm — ảnh hưởng % tài xế trên net (dashboard xe: 10% / 15%) */
+  private normalizeDriverShift(raw?: string | null): 'day' | 'night' {
+    const s = String(raw ?? 'day').toLowerCase();
+    return s === 'night' ? 'night' : 'day';
+  }
+
+  /**
+   * Lương phụ xe trên chuyến = `baseSalary` của NV phụ xe (giống cách gán lương tài xế).
+   * Không nhận từ FE.
+   */
+  private async applyAssistantSalaryFromEmployee(
+    companyId: string,
+    trip: Trip,
+    coDriverId: string,
+  ): Promise<void> {
+    const emp = await this.employeeRepository.findOne({
+      where: { id: coDriverId, companyId },
+      select: ['id', 'baseSalary'],
+    });
+    if (!emp) {
+      throw new NotFoundException('Phụ xe không tồn tại');
+    }
+    trip.assistantSalary = Number(emp.baseSalary ?? 0);
   }
 
   async assignVehicle(companyId: string, tripId: string, vehicleId: string) {
-    const trip = await this.findOne(companyId, tripId);
+    const trip = await this.findTripEntity(companyId, tripId);
     await this.assertVehicleAssignable(
       companyId,
       vehicleId,
@@ -418,7 +610,7 @@ export class TripsService {
     vehicleId: string,
     driverId: string,
   ) {
-    const trip = await this.findOne(companyId, tripId);
+    const trip = await this.findTripEntity(companyId, tripId);
     await this.assertVehicleAssignable(
       companyId,
       vehicleId,
@@ -442,7 +634,7 @@ export class TripsService {
   }
 
   async remove(companyId: string, id: string) {
-    const trip = await this.findOne(companyId, id);
+    const trip = await this.findTripEntity(companyId, id);
     if (trip.status !== 'new') {
       throw new BadRequestException('Only NEW trips can be deleted');
     }
@@ -458,7 +650,7 @@ export class TripsService {
   }
 
   async updateStatus(companyId: string, id: string, nextStatus: string) {
-    const trip = await this.findOne(companyId, id);
+    const trip = await this.findTripEntity(companyId, id);
     const current = this.normalizeTripStatusForFlow(trip.status);
 
     const to = nextStatus.toLowerCase();
@@ -484,10 +676,11 @@ export class TripsService {
     const saved = await this.tripRepository.save(trip);
 
     if (current !== 'completed' && to === 'completed') {
-      await this.createCommissionIfEligible(saved);
+      const fullTrip = await this.findTripEntity(companyId, saved.id);
+      await this.createCommissionIfEligible(fullTrip);
       await this.transactionsService.createIncomeFromCompletedTripIfAbsent(
         companyId,
-        saved,
+        fullTrip,
       );
     }
 
@@ -630,6 +823,20 @@ export class TripsService {
 
     if (overlapping) {
       throw new BadRequestException('Vehicle is already assigned for this date');
+    }
+  }
+
+  private async assertEmployeeInCompany(
+    companyId: string,
+    employeeId: string,
+    label: string,
+  ) {
+    const emp = await this.employeeRepository.findOne({
+      where: { id: employeeId, companyId },
+      select: ['id'],
+    });
+    if (!emp) {
+      throw new NotFoundException(`${label}: nhân viên không tồn tại`);
     }
   }
 

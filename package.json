@@ -22,7 +22,8 @@
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/data-source.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
-    "seed:test": "ts-node -r tsconfig-paths/register src/scripts/seed-test-data.ts"
+    "seed:test": "ts-node -r tsconfig-paths/register src/scripts/seed-test-data.ts",
+    "import:excel": "ts-node -r tsconfig-paths/register src/scripts/import-excel-trips.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
