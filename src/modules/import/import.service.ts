@@ -224,9 +224,10 @@ export class ImportService {
 
   // ---------------------------------------------------------------------------
   // Trips
-  // Col: Mã chuyến, Ngày*, Biển số xe*, Tài xế (mã/tên)*, Khách hàng (mã/tên)*,
-  //      Tuyến đường, Doanh thu, Phí cầu đường, Vé, Phạt, CP khác, Ghi chú CP,
-  //      Ca (day/night), Phụ cấp phụ xe, Trạng thái, Ghi chú
+  // Col: Mã chuyến, Ngày*, Biển số xe*, Tài xế*, Khách hàng*,
+  //      Tuyến đường, Doanh thu, Đã thanh toán,
+  //      Phí cầu đường, Vé cổng, Tiền phạt, Tiền dầu, Sửa chữa,
+  //      CP khác, Ghi chú CP, Ca (day/night), Phụ cấp phụ xe, Trạng thái, Ghi chú
   // ---------------------------------------------------------------------------
   private async importTrips(rows: any[][], companyId: string): Promise<ImportResult> {
     const result: ImportResult = { success: 0, failed: 0, errors: [] };
@@ -265,8 +266,9 @@ export class ImportService {
       const rowNum = i + 2;
       const [
         tripCode, tripDate, licensePlate, driverVal, customerVal,
-        address, revenue, tollCost, ticketCost, fineCost, otherCosts,
-        otherCostsNote, driverShift, assistantAllowance, status, notes,
+        address, revenue, paidAmount,
+        tollCost, ticketCost, fineCost, fuelCost, repairCost,
+        otherCosts, otherCostsNote, driverShift, assistantAllowance, status, notes,
       ] = rows[i];
 
       // Validate required
@@ -341,9 +343,12 @@ export class ImportService {
 
         const shift = String(driverShift || 'day').toLowerCase().startsWith('n') ? 'night' : 'day';
         const rev = revenue != null ? Number(revenue) : 0;
+        const paid = paidAmount != null ? Number(paidAmount) : 0;
         const toll = tollCost != null ? Number(tollCost) : 0;
         const ticket = ticketCost != null ? Number(ticketCost) : 0;
         const fine = fineCost != null ? Number(fineCost) : 0;
+        const fuel = fuelCost != null ? Number(fuelCost) : 0;
+        const repair = repairCost != null ? Number(repairCost) : 0;
         const other = otherCosts != null ? Number(otherCosts) : 0;
         const assistantAllowanceNum = assistantAllowance != null ? Number(assistantAllowance) : 0;
 
@@ -357,9 +362,12 @@ export class ImportService {
             customerId: customer.id,
             address: address ? String(address).trim() : undefined,
             revenue: rev,
+            paidAmount: paid,
             tollCost: toll,
             ticketCost: ticket,
             fineCost: fine,
+            fuelCost: fuel,
+            repairCost: repair,
             otherCosts: other,
             otherCostsNote: otherCostsNote ? String(otherCostsNote).trim() : undefined,
             driverShift: shift,

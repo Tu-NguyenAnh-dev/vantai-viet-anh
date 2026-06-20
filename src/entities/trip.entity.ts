@@ -127,6 +127,9 @@ export class Trip {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'fuel_cost' })
   fuelCost: number;
 
+  @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'repair_cost' })
+  repairCost: number;
+
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'toll_cost' })
   tollCost: number;
 
