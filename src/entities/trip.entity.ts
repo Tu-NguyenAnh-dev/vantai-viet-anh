@@ -203,8 +203,7 @@ export class Trip {
   @OneToMany(() => Transaction, (transaction) => transaction.trip)
   transactions: Transaction[];
 
-  // Calculate profit before save
-  @Column({ type: 'decimal', precision: 15, scale: 2, nullable: true, select: false })
+  // Helper (not persisted)
   private _calculatedProfit: number;
 
   // Method to calculate profit
