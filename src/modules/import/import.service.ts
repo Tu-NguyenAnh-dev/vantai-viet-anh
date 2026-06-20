@@ -314,12 +314,20 @@ export class ImportService {
         continue;
       }
 
-      // Parse date
+      // Parse date — supports Date object, DD/MM/YYYY, YYYY-MM-DD
       let parsedDate: Date;
       if (tripDate instanceof Date) {
         parsedDate = tripDate;
       } else {
-        const d = new Date(tripDate);
+        const str = String(tripDate).trim();
+        let d: Date;
+        // DD/MM/YYYY
+        const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (dmyMatch) {
+          d = new Date(`${dmyMatch[3]}-${dmyMatch[2].padStart(2,'0')}-${dmyMatch[1].padStart(2,'0')}`);
+        } else {
+          d = new Date(str);
+        }
         if (isNaN(d.getTime())) {
           result.failed++;
           result.errors.push({ row: rowNum, field: 'Ngày', message: `Ngày không hợp lệ: ${tripDate}` });
