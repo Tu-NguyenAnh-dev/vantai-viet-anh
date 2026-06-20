@@ -16,6 +16,7 @@ import { DatabaseModule } from './database/database.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { DebtsModule } from './modules/debts/debts.module';
 import { SalariesModule } from './modules/salaries/salaries.module';
+import { ImportModule } from './modules/import/import.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { SalariesModule } from './modules/salaries/salaries.module';
     SuppliersModule,
     DebtsModule,
     SalariesModule,
+    ImportModule,
   ],
 })
 export class AppModule {}
