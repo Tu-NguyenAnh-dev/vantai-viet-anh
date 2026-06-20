@@ -43,13 +43,13 @@ export class ImportController {
   ) {
     if (!file) throw new BadRequestException('Không có file');
 
-    const allowed = ['vehicles', 'employees', 'customers'];
+    const allowed = ['vehicles', 'employees', 'customers', 'trips'];
     if (!allowed.includes(type)) {
       throw new BadRequestException(`Loại import không hợp lệ: ${type}`);
     }
 
     return this.importService.importExcel(
-      type as 'vehicles' | 'employees' | 'customers',
+      type as 'vehicles' | 'employees' | 'customers' | 'trips',
       file.buffer,
       companyId,
     );
