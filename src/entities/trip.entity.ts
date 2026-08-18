@@ -39,19 +39,19 @@ export class Trip {
   tripDate: Date;
 
   // Foreign Keys
-  @ManyToOne(() => Vehicle, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => Vehicle, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'vehicle_id' })
   vehicle: Vehicle;
 
-  @Column({ name: 'vehicle_id' })
+  @Column({ name: 'vehicle_id', nullable: true })
   @Index()
   vehicleId: string;
 
-  @ManyToOne(() => Employee, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => Employee, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'driver_id' })
   driver: Employee;
 
-  @Column({ name: 'driver_id' })
+  @Column({ name: 'driver_id', nullable: true })
   @Index()
   driverId: string;
 
