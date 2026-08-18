@@ -763,8 +763,11 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((e) => {
-  // eslint-disable-next-line no-console
-  console.error('[seed] Lỗi:', e);
-  process.exit(1);
-});
+// Chỉ tự chạy khi gọi trực tiếp (npm run seed:test) — tránh side-effect khi file khác import IDS/SEED_COMPANY_CODE
+if (require.main === module) {
+  main().catch((e) => {
+    // eslint-disable-next-line no-console
+    console.error('[seed] Lỗi:', e);
+    process.exit(1);
+  });
+}
