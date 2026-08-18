@@ -6,6 +6,8 @@ import { Vehicle } from '../../entities/vehicle.entity';
 import { Employee } from '../../entities/employee.entity';
 import { Customer } from '../../entities/customer.entity';
 import { Trip } from '../../entities/trip.entity';
+import { DebtsService } from '../debts/debts.service';
+import { TransactionsService } from '../transactions/transactions.service';
 
 export interface ImportResult {
   success: number;
@@ -22,6 +24,8 @@ export class ImportService {
     @InjectRepository(Employee) private employeeRepo: Repository<Employee>,
     @InjectRepository(Customer) private customerRepo: Repository<Customer>,
     @InjectRepository(Trip) private tripRepo: Repository<Trip>,
+    private debtsService: DebtsService,
+    private transactionsService: TransactionsService,
   ) {}
 
   async importExcel(
@@ -359,31 +363,53 @@ export class ImportService {
         const repair = repairCost != null ? Number(repairCost) : 0;
         const other = otherCosts != null ? Number(otherCosts) : 0;
         const assistantAllowanceNum = assistantAllowance != null ? Number(assistantAllowance) : 0;
+        const resolvedStatus = status ? String(status).trim() : 'completed';
 
-        await this.tripRepo.save(
-          this.tripRepo.create({
+        const trip = this.tripRepo.create({
+          companyId,
+          tripCode: tripCode ? String(tripCode).trim() : undefined,
+          tripDate: parsedDate,
+          vehicleId: vehicle.id,
+          driverId: driver.id,
+          customerId: customer.id,
+          address: address ? String(address).trim() : undefined,
+          revenue: rev,
+          paidAmount: paid,
+          tollCost: toll,
+          ticketCost: ticket,
+          fineCost: fine,
+          fuelCost: fuel,
+          repairCost: repair,
+          otherCosts: other,
+          otherCostsNote: otherCostsNote ? String(otherCostsNote).trim() : undefined,
+          driverShift: shift,
+          assistantAllowance: assistantAllowanceNum,
+          // Xấp xỉ bằng baseSalary của NV — giống cách excel.service.ts (pipeline Excel còn lại,
+          // Bull queue) đang làm. KHÔNG dùng công thức %/net-revenue của
+          // TripsService.calculateDriverSalary vì hàm đó private, không expose cho module khác.
+          driverSalary: Number(driver.baseSalary ?? 0),
+          status: resolvedStatus,
+          notes: notes ? String(notes).trim() : undefined,
+        });
+
+        // Trước đây thiếu đúng 3 bước dưới đây (so với TripsService.create() / excel.service.ts),
+        // khiến MỌI chuyến import qua Excel không có Lợi nhuận, không có Công nợ, và (nếu completed)
+        // không có giao dịch Thu-Chi — dù trip.revenue/paidAmount vẫn hiện đúng ở cấp từng chuyến.
+        trip.profit = trip.calculateProfit();
+        await this.tripRepo.save(trip);
+        // Tạo khoản phải thu — không điều kiện theo status, khớp TripsService.create() (một trip
+        // luôn có 1 khoản RECEIVABLE ngay khi tồn tại, bất kể đã hoàn thành hay chưa).
+        await this.debtsService.createReceivableFromTrip(companyId, trip);
+        // Giao dịch thu chỉ sinh khi trip THỰC SỰ completed — khớp TripsService.updateStatus(), nơi
+        // duy nhất luồng tạo-1-chuyến gọi createIncomeFromCompletedTripIfAbsent. Excel cho phép nhập
+        // status khác 'completed' (không như excel.service.ts luôn hardcode 'completed'), nên phải
+        // check rõ ở đây để không tạo nhầm giao dịch thu cho chuyến chưa hoàn thành.
+        if (resolvedStatus.toLowerCase() === 'completed') {
+          await this.transactionsService.createIncomeFromCompletedTripIfAbsent(
             companyId,
-            tripCode: tripCode ? String(tripCode).trim() : undefined,
-            tripDate: parsedDate,
-            vehicleId: vehicle.id,
-            driverId: driver.id,
-            customerId: customer.id,
-            address: address ? String(address).trim() : undefined,
-            revenue: rev,
-            paidAmount: paid,
-            tollCost: toll,
-            ticketCost: ticket,
-            fineCost: fine,
-            fuelCost: fuel,
-            repairCost: repair,
-            otherCosts: other,
-            otherCostsNote: otherCostsNote ? String(otherCostsNote).trim() : undefined,
-            driverShift: shift,
-            assistantAllowance: assistantAllowanceNum,
-            status: status ? String(status).trim() : 'completed',
-            notes: notes ? String(notes).trim() : undefined,
-          }),
-        );
+            trip,
+          );
+        }
         result.success++;
       } catch (err) {
         result.failed++;

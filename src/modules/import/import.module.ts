@@ -7,9 +7,13 @@ import { Vehicle } from '../../entities/vehicle.entity';
 import { Employee } from '../../entities/employee.entity';
 import { Customer } from '../../entities/customer.entity';
 import { Trip } from '../../entities/trip.entity';
+import { DebtsModule } from '../debts/debts.module';
+import { TransactionsModule } from '../transactions/transactions.module';
 
 @Module({
   imports: [
+    DebtsModule,
+    TransactionsModule,
     TypeOrmModule.forFeature([Vehicle, Employee, Customer, Trip]),
     MulterModule.register(),
   ],
