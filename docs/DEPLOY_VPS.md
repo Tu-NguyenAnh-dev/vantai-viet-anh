@@ -1,5 +1,7 @@
 # Hướng dẫn Deploy Vận Tải Anh Việt lên VPS (Mat Bao)
 
+> **Thư mục thực tế trên VPS (xác nhận 2026-08-18 qua `pm2 describe vantai-api`): `/var/vantai-viet-anh`** — không phải `/var/www/vantai/vantaiAnhViet` như hướng dẫn Bước 3 dưới đây. VPS chạy bằng user `root`. Nếu deploy lần đầu vào máy mới thì path ở Bước 3 vẫn áp dụng được (chỉ là quy ước), nhưng khi **redeploy** vào VPS hiện có, luôn `cd /var/vantai-viet-anh`.
+
 ## Bước 1: Cài đặt môi trường trên VPS
 
 SSH vào VPS, chạy từng lệnh:
@@ -59,6 +61,8 @@ git clone https://github.com/username/vantaiAnhViet.git
 cd vantaiAnhViet
 ```
 
+> Repo thật hiện tại: `git@github.com:vjrutBLACK/vantai-viet-anh.git` (SSH — VPS cần có deploy key add vào GitHub, hoặc dùng URL HTTPS tương ứng nếu chưa setup SSH).
+
 ### Cách 2: Dùng SCP (copy từ máy local)
 
 Trên **máy Mac** (chạy trong thư mục dự án):
@@ -113,12 +117,15 @@ cd /var/www/vantai/vantaiAnhViet
 # Cài dependencies
 npm install
 
-# Tạo bảng (chạy schema SQL)
+# Tạo bảng (chạy schema SQL) — chỉ cần lần đầu, DB đã có thì bỏ qua bước này
 sudo -u postgres psql -d vantai_anh_viet -f database/schema.sql
 
-# Chạy migration bổ sung (nếu có)
-sudo -u postgres psql -d vantai_anh_viet -f database/migrations/20260302_trips_address_replace_origin_destination_distance.sql 2>/dev/null || true
-sudo -u postgres psql -d vantai_anh_viet -f database/migrations/20260321_vehicles_maintenance_cost.sql 2>/dev/null || true
+# Chạy TẤT CẢ migration theo thứ tự tên file (không chỉ 1-2 file cụ thể)
+# Mọi migration đều dùng IF NOT EXISTS/IF EXISTS nên chạy lại an toàn, kể cả file đã áp dụng trước đó
+for f in database/migrations/*.sql; do
+  echo "Applying $f"
+  sudo -u postgres psql -d vantai_anh_viet -f "$f"
+done
 
 # (Tùy chọn) Seed dữ liệu test
 npm run seed:test
@@ -143,6 +150,8 @@ Kiểm tra: `pm2 status` — app phải ở trạng thái **online**.
 ```bash
 sudo nano /etc/nginx/sites-available/vantaianhviet
 ```
+
+> Trên VPS thật, file này (`/etc/nginx/sites-enabled/vantaianhviet`) đã được cấu hình đầy đủ cho **cả FE lẫn BE** (root trỏ vào build FE + location `/api` proxy BE) — xem bản đầy đủ trong `vantaiAnhViet-web/docs/DEPLOY.md` Bước 4. Nội dung dưới đây chỉ minh hoạ trường hợp deploy riêng BE.
 
 Nội dung (áp dụng khi **chỉ có backend API**):
 
@@ -214,15 +223,30 @@ Làm theo hướng dẫn, nhập email. Certbot sẽ tự cấu hình HTTPS.
 
 ---
 
-## Cập nhật code sau này
+## Cập nhật code sau này (re-deploy)
 
 ```bash
-cd /var/www/vantai/vantaiAnhViet
+cd /var/vantai-viet-anh
+
+# Check trạng thái hiện tại trước khi pull (tránh mất sửa tay chưa commit)
+git status
+git log --oneline -5
+
 git pull
 npm install
+
+# Chạy lại toàn bộ migration — an toàn dù đã áp dụng rồi (đều có IF NOT EXISTS)
+for f in database/migrations/*.sql; do
+  echo "Applying $f"
+  sudo -u postgres psql -d vantai_anh_viet -f "$f"
+done
+
 npm run build
 pm2 restart vantai-api
+pm2 save
 ```
+
+Verify: `pm2 status` (phải **online**), `pm2 logs vantai-api --lines 50`, `curl http://localhost:3000/api/v1`.
 
 ---
 

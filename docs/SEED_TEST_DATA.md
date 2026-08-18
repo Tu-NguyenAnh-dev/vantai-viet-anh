@@ -1,5 +1,22 @@
 # Dữ liệu test (seed)
 
+## Dữ liệu tháng 8/2026 (demo)
+
+Chạy sau khi đã có seed tháng 3 (bên dưới). Bổ sung 10 chuyến `TRIP-202608-xxxx` + nghỉ phép/ứng lương thật + bảo trì xe + công nợ/thu chi cho tháng 8, vào **cùng company `TEST_SEED`** — không tạo company/xe/NV/KH mới.
+
+```bash
+npm run seed:test:2026-08
+```
+
+Idempotent theo tháng: nếu đã có `tripCode` bắt đầu bằng `TRIP-202608` thì bỏ qua. Đi qua service thật (`TripsService`/`EmployeesService`/`VehiclesService`) nên field tính toán và side-effect (debt/transaction/commission) đúng y hệt sản phẩm thật.
+
+**Không seed được**: Excel Import (cần file .xlsx thật) — nếu cần demo phần này, upload file qua UI.
+
+**Dọn dữ liệu demo sau này** (xoá cả company + mọi dữ liệu liên quan, cascade tự động):
+```sql
+DELETE FROM companies WHERE code = 'TEST_SEED';
+```
+
 ## Yêu cầu
 
 - PostgreSQL đúng cấu hình trong `.env` (`DB_*`).

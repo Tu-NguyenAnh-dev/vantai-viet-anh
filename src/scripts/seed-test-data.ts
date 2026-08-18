@@ -35,7 +35,7 @@ export const SEED_MONTH = {
 } as const;
 
 /** UUID cố định (ổn định khi debug / doc) */
-const IDS = {
+export const IDS = {
   company: 'a0000001-0000-4000-8000-000000000001',
   user: 'a0000001-0000-4000-8000-000000000002',
   v1: 'a0000001-0000-4000-8000-000000000003',
